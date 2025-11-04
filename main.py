@@ -1,256 +1,162 @@
-import os
-import re
 import streamlit as st
 import pandas as pd
+import os
+from pathlib import Path
 
-# ---------------------------------------------------------
-# CONFIG
-# ---------------------------------------------------------
-st.set_page_config(page_title="Urantia Theme Study", layout="wide")
+st.set_page_config(page_title="Urantia Theme Study (alpha)", layout="wide")
 
-URANTIA_EN_PATH = os.path.join("data", "urantia_en.txt")
-GLOSSARY_PATH = os.path.join("data", "English_Master_Glossary.xlsx")
-# ---------------------------------------------------------
-# SAFE LOADERS
-# ---------------------------------------------------------
-def safe_read_lines(path):
+DATA_DIR = Path("data")
+GLOSSARY_CANDIDATES = [
+    DATA_DIR / "English_Master_Glossary.xlsx",
+    DATA_DIR / "glossary.xlsx",
+]
+EN_PATH = DATA_DIR / "urantia_en.txt"
+
+# ---------------------------
+# 헬퍼: 텍스트 안전하게 읽기
+# ---------------------------
+def safe_read_text(path: Path):
+    if not path.exists():
+        return "", 0
     encodings = ["utf-8", "utf-8-sig", "cp949", "euc-kr", "latin-1"]
     for enc in encodings:
         try:
-            with open(path, "r", encoding=enc) as f:
-                return f.readlines()
+            text = path.read_text(encoding=enc)
+            return text, len(text.splitlines())
         except Exception:
             continue
-    # 최후의 수단
-    with open(path, "r", encoding="utf-8", errors="replace") as f:
-        return f.readlines()
+    # 마지막 수단
+    text = path.read_text(encoding="utf-8", errors="replace")
+    return text, len(text.splitlines())
 
-@st.cache_data
-def load_urantia_en():
-    lines = safe_read_lines(URANTIA_EN_PATH)
-    data = []
-    for line in lines:
-        line = line.strip()
-        if not line:
-            continue
-        # typical: "111:0.1 text..."
-        m = re.match(r"^(\d+:\d+\.\d+)\s+(.*)$", line)
-        if m:
-            ref = m.group(1).strip()
-            txt = m.group(2).strip()
-            data.append({"ref": ref, "text": txt})
-        else:
-            # 라인 포맷이 다르면 그냥 텍스트만
-            data.append({"ref": "", "text": line})
-    return data
-
+# ---------------------------
+# 헬퍼: glossary 읽기
+# ---------------------------
 @st.cache_data
 def load_glossary():
-    if not os.path.exists(GLOSSARY_PATH):
-        return pd.DataFrame(columns=["term", "definition"])
-    df = pd.read_excel(GLOSSARY_PATH)
-    df.columns = [c.strip().lower() for c in df.columns]
-    # 기대하는 컬럼 이름: term, definition
-    # 없는 경우 대비
-    if "term" not in df.columns:
-        df["term"] = ""
-    if "definition" not in df.columns:
-        df["definition"] = ""
-    return df[["term", "definition"]]
-
-urantia_en = load_urantia_en()
-glossary_df = load_glossary()
-
-# ---------------------------------------------------------
-# OPTIONAL: OPENAI CLIENT
-# ---------------------------------------------------------
-OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "").strip()
-have_openai = bool(OPENAI_API_KEY)
-if have_openai:
-    from openai import OpenAI
-    client = OpenAI(api_key=OPENAI_API_KEY)
-
-# ---------------------------------------------------------
-# UI - HEADER
-# ---------------------------------------------------------
-st.title("📘 Urantia Theme Study")
-st.caption("Keyword → glossary → Urantia text → (optional) GPT analysis → 5-slide outline")
-
-keyword = st.text_input("Enter a Urantia concept / keyword (e.g. 'Thought Adjuster', 'Supreme Being', 'Eternal Life', 'Enoch')", "")
-
-if not keyword:
-    st.info("Type a keyword above to start.")
-    st.stop()
-
-kw_lower = keyword.lower().strip()
-
-# ---------------------------------------------------------
-# 1) GLOSSARY LOOKUP
-# ---------------------------------------------------------
-st.subheader("1. Glossary lookup")
-
-matched_gloss = glossary_df[glossary_df["term"].str.lower() == kw_lower]
-
-if matched_gloss.empty:
-    st.write("No glossary match found for this term.")
-    glossary_def = ""
-else:
-    row = matched_gloss.iloc[0]
-    glossary_def = row["definition"]
-    st.success(f"**{row['term']}** – {row['definition']}")
-
-# ---------------------------------------------------------
-# 2) URANTIA TEXT SEARCH
-# ---------------------------------------------------------
-st.subheader("2. Passages in The Urantia Book")
-
-matches = []
-for entry in urantia_en:
-    txt_lower = entry["text"].lower()
-    if kw_lower in txt_lower:
-        matches.append(entry)
-
-if not matches:
-    st.warning("No passages found in urantia_en.txt containing that keyword.")
-else:
-    st.write(f"Found **{len(matches)}** passage(s) containing **{keyword}**:")
-    for m in matches[:100]:  # safety limit
-        ref_show = m["ref"] if m["ref"] else "(no ref)"
-        # highlight keyword
-        highlighted = re.sub(f"(?i)({re.escape(keyword)})", r"**\1**", m["text"])
-        st.markdown(f"- **{ref_show}** — {highlighted}")
-
-# ---------------------------------------------------------
-# 3) TOPIC IMPORTANCE CHECK (GPT)
-# ---------------------------------------------------------
-st.subheader("3. Topic importance check")
-
-if not have_openai:
-    st.info("OpenAI API key is not set. Add OPENAI_API_KEY in Render to enable GPT features.")
-    st.stop()
-
-check_btn = st.button("Check if this is a major Urantia topic")
-
-is_major_topic = False
-topic_reason = ""
-
-if check_btn:
-    # build a small context from matches (first few)
-    sample_text = "\n".join([f"{m['ref']} {m['text']}" for m in matches[:5]])
-    prompt = f"""
-You are an expert on *The Urantia Book*.
-
-Term: "{keyword}"
-
-Here are some passages where it appears:
-{sample_text}
-
-Question: In the context of The Urantia Book, is this term a **major thematic / doctrinal topic** (like Trinity, Thought Adjusters, Universe Administration, Eternal Life), or is it just a **minor or incidental reference** (like a person's name that appears once)?
-
-Answer ONLY in JSON with two fields:
-{{
-  "importance": "major" or "minor",
-  "reason": "short explanation"
-}}
-"""
-    try:
-        resp = client.responses.create(
-            model="gpt-4o-mini",  # 작은 모델로 판정만
-            input=prompt
-        )
-        text = resp.output[0].content[0].text  # responses API 구조
-        import json
-        parsed = json.loads(text)
-        importance = parsed.get("importance", "minor")
-        topic_reason = parsed.get("reason", "")
-        if importance == "major":
-            is_major_topic = True
-            st.success(f"Major topic ✅ — {topic_reason}")
-        else:
-            is_major_topic = False
-            st.warning(f"Minor / incidental reference ⚠️ — {topic_reason}")
-    except Exception as e:
-        st.error(f"Error while checking topic importance: {e}")
-
-# ---------------------------------------------------------
-# 4) GPT ANALYSIS & 5-SLIDE OUTLINE (only for major topics)
-# ---------------------------------------------------------
-st.subheader("4. AI study material")
-
-if not matches and not glossary_def:
-    st.info("There is not enough source material to generate a good AI explanation.")
-    st.stop()
-
-if not is_major_topic:
-    st.info("This term is not classified as a major Urantia topic. You can still force-generate analysis below.")
-    force_generate = st.checkbox("Force generate anyway?")
-    can_generate = force_generate
-else:
-    can_generate = True
-
-if can_generate:
-    gen_btn = st.button("Generate GPT analysis and 5-slide outline")
-    if gen_btn:
-        # build source text
-        source_text = "\n".join([f"{m['ref']} {m['text']}" for m in matches[:15]])
-        glossary_part = f"Glossary definition: {glossary_def}" if glossary_def else "No glossary definition available."
-
-        analysis_prompt = f"""
-You are a theologian and Urantia Book specialist.
-
-User keyword: "{keyword}"
-
-{glossary_part}
-
-Below are relevant Urantia Book excerpts:
-{source_text}
-
-TASK 1 — EXPLANATION:
-Write a clear, structured explanation of this concept *as it is used in The Urantia Book*: definition, cosmic context, related beings, spiritual significance. Keep it 4–6 paragraphs.
-
-TASK 2 — SLIDE OUTLINE:
-Then create a 5-slide outline for a presentation on this concept for Urantia readers. Use this JSON format:
-
-{{
-  "analysis": "...",
-  "slides": [
-    "Slide 1 title + bullet points",
-    "Slide 2 ...",
-    "Slide 3 ...",
-    "Slide 4 ...",
-    "Slide 5 ..."
-  ]
-}}
-"""
-        try:
-            resp2 = client.responses.create(
-                model="gpt-4.1-mini",
-                input=analysis_prompt
-            )
-            raw = resp2.output[0].content[0].text
-            # try to parse JSON; if fails, just show raw
+    for cand in GLOSSARY_CANDIDATES:
+        if cand.exists():
             try:
-                import json
-                data = json.loads(raw)
-                analysis = data.get("analysis", raw)
-                slides = data.get("slides", [])
-            except Exception:
-                analysis = raw
-                slides = []
+                df = pd.read_excel(cand)
+                # 컬럼 이름을 소문자로
+                df.columns = [str(c).strip().lower() for c in df.columns]
+                return df, cand.name
+            except Exception as e:
+                return None, f"{cand.name} 읽기 실패: {e}"
+    return None, "glossary 파일을 찾지 못했습니다."
 
-            st.markdown("### 🔎 GPT Explanation")
-            st.write(analysis)
+# ---------------------------
+# 실제 데이터 읽기
+# ---------------------------
+glossary_df, glossary_status = load_glossary()
+en_text, en_lines = safe_read_text(EN_PATH)
 
-            st.markdown("### 🖼 5-slide outline (for Gamma)")
-            if slides:
-                for i, s in enumerate(slides, start=1):
-                    st.markdown(f"**Slide {i}** — {s}")
-            else:
-                st.write("Slides could not be parsed, but raw output is above.")
-        except Exception as e:
-            st.error(f"Error while generating analysis: {e}")
+st.title("📘 Urantia Theme Study (alpha)")
+st.caption("Keyword → glossary → source passages → AI (나중에)")
+
+# 디버그 정보 (지금은 보이게 해둠)
+with st.expander("📦 Data status (이건 임시로 보이게 합니다)", expanded=True):
+    st.write(f"📁 data/ 디렉토리 존재: {DATA_DIR.exists()}")
+    st.write(f"📄 urantia_en.txt 존재: {EN_PATH.exists()} (lines: {en_lines})")
+    st.write(f"📄 glossary 상태: {glossary_status}")
+
+term = st.text_input("🔍 주제 / 용어를 입력하세요 (예: Thought Adjuster, faith, Michael)", "")
+
+if term:
+    term_low = term.lower().strip()
+
+    # 1. Glossary lookup
+    st.subheader("1. Glossary lookup")
+    if glossary_df is None:
+        st.warning("📂 glossary를 불러오지 못했습니다. 파일 이름이 English_Master_Glossary.xlsx 인지 확인해 주세요.")
+    else:
+        # 어떤 컬럼이 있는지 확인
+        cols = list(glossary_df.columns)
+        # 용어 비슷한 컬럼 찾기
+        possible_term_cols = [c for c in cols if "term" in c or "entry" in c or "word" in c]
+        # 설명 비슷한 컬럼
+        possible_def_cols = [c for c in cols if "def" in c or "description" in c or "explanation" in c or "meaning" in c]
+
+        df = glossary_df.copy()
+
+        # 일단 전 컬럼 문자열로
+        for c in df.columns:
+            df[c] = df[c].astype(str)
+
+        # 용어 컬럼 있으면 그걸로 필터
+        if possible_term_cols:
+            mask = False
+            for c in possible_term_cols:
+                mask = mask | df[c].str.lower().str.contains(term_low, na=False)
+            hits = df[mask]
+        else:
+            # 용어 컬럼을 못 찾겠으면 모든 컬럼에서 검색
+            mask = False
+            for c in df.columns:
+                mask = mask | df[c].str.lower().str.contains(term_low, na=False)
+            hits = df[mask]
+
+        if hits.empty:
+            st.info("No glossary match found for this term.")
+        else:
+            for _, row in hits.iterrows():
+                st.markdown("---")
+                # 제목 후보
+                title = None
+                if possible_term_cols:
+                    for c in possible_term_cols:
+                        if c in row:
+                            title = row[c]
+                            break
+                if not title:
+                    title = term
+                st.markdown(f"**🔹 {title}**")
+                # 설명 후보
+                body = None
+                if possible_def_cols:
+                    for c in possible_def_cols:
+                        if c in row and row[c] not in ["", "nan", "None"]:
+                            body = row[c]
+                            break
+                if not body:
+                    # 남는 컬럼 합쳐서
+                    body_parts = []
+                    for c in df.columns:
+                        val = row.get(c, "")
+                        if isinstance(val, str) and val not in ["", "nan", "None"]:
+                            body_parts.append(f"**{c}**: {val}")
+                    body = "\n\n".join(body_parts)
+                st.write(body)
+
+    # 2. Passages in The Urantia Book
+    st.subheader("2. Passages in The Urantia Book")
+    if not en_text:
+        st.warning("urantia_en.txt 를 읽지 못했습니다. data/ 안에 있고 UTF-8 또는 UTF-8-SIG 로 저장되었는지 확인해 주세요.")
+    else:
+        # 줄 단위로 검색
+        lines = en_text.splitlines()
+        hits = []
+        for line in lines:
+            if term_low in line.lower():
+                hits.append(line.strip())
+        if not hits:
+            st.info("No passages found in urantia_en.txt containing that keyword.")
+        else:
+            st.markdown(f"**Found {len(hits)} passages containing '{term}':**")
+            for h in hits[:50]:
+                st.markdown(f"- {h}")
+
+    # 3. Topic importance check (형식만)
+    st.subheader("3. Topic importance check")
+    st.write("이 주제가 너무 짧거나 애매하면 AI 설명을 건너뛰도록 할 수 있습니다. 지금은 수동 모드입니다.")
+
+    # 4. AI study material (현재는 자리만)
+    st.subheader("4. AI study material")
+    st.write("현재는 OpenAI 호출 부분을 비워두었습니다. 위에서 본문이 1개 이상이라면 여기서 GPT 호출을 붙이면 됩니다.")
 else:
-    st.info("This term was judged minor. Nothing more to generate.")
+    st.info("먼저 위 입력창에 찾고 싶은 주제나 단어를 넣어 주세요.")
+
+
 
 
 
