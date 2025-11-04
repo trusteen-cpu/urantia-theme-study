@@ -9,8 +9,7 @@ import pandas as pd
 st.set_page_config(page_title="Urantia Theme Study", layout="wide")
 
 URANTIA_EN_PATH = os.path.join("data", "urantia_en.txt")
-GLOSSARY_PATH = os.path.join("data", "glossary.xlsx")
-
+GLOSSARY_PATH = os.path.join("data", "English_Master_Glossary.xlsx")
 # ---------------------------------------------------------
 # SAFE LOADERS
 # ---------------------------------------------------------
@@ -252,5 +251,6 @@ Then create a 5-slide outline for a presentation on this concept for Urantia rea
             st.error(f"Error while generating analysis: {e}")
 else:
     st.info("This term was judged minor. Nothing more to generate.")
+
 
 
