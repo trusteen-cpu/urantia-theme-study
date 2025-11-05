@@ -67,23 +67,34 @@ if term:
     st.markdown("---")
 
     # 1️⃣ Glossary lookup
-    st.subheader("1. Glossary lookup")
-    if glossary is not None:
-        df = glossary.copy()
-        df.columns = [c.strip().lower() for c in df.columns]
+st.subheader("1. Glossary lookup")
+if glossary is not None:
+    df = glossary.copy()
+    df.columns = [c.strip().lower() for c in df.columns]
 
-        # normalize
-        df["term"] = df["term"].astype(str).str.strip().str.lower()
-        df["definition"] = df["definition"].astype(str)
-        found = df[df["term"].str.contains(term.lower(), case=False, na=False)]
+    # ✅ term/definition 컬럼 이름 자동 보정
+    if "term" not in df.columns:
+        for alt in ["word", "entry", "expression"]:
+            if alt in df.columns:
+                df.rename(columns={alt: "term"}, inplace=True)
+    if "definition" not in df.columns:
+        for alt in ["description", "meaning", "explanation"]:
+            if alt in df.columns:
+                df.rename(columns={alt: "definition"}, inplace=True)
 
-        if len(found) > 0:
-            for _, row in found.iterrows():
-                st.markdown(f"**{row['term'].capitalize()}** — {row['definition']}")
-        else:
-            st.info("No glossary match found for this term.")
+    # ✅ 검색 처리
+    df["term"] = df["term"].astype(str).str.strip().str.lower()
+    df["definition"] = df["definition"].astype(str)
+    found = df[df["term"].str.contains(term.lower(), case=False, na=False)]
+
+    if len(found) > 0:
+        for _, row in found.iterrows():
+            st.markdown(f"**{row['term'].capitalize()}** — {row['definition']}")
     else:
-        st.warning("Glossary not loaded.")
+        st.info("No glossary match found for this term.")
+else:
+    st.warning("Glossary not loaded.")
+
 
     # 2️⃣ English text search
     st.subheader("2. Passages in The Urantia Book")
@@ -107,6 +118,7 @@ if term:
 
 else:
     st.info("Please enter a keyword or theme above to begin searching.")
+
 
 
 
