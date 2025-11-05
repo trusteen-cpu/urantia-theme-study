@@ -67,37 +67,32 @@ if term:
 
     # 1. Glossary lookup
     st.subheader("1. Glossary lookup")
-    if glossary_df is None:
-        st.warning("📂 glossary를 불러오지 못했습니다. 파일 이름이 English_Master_Glossary.xlsx 인지 확인해 주세요.")
+term = st.text_input("찾고 싶은 용어 (영어 또는 한국어):", "", key="glossary_input").strip()
+
+if glossary is not None and term:
+    df = glossary.copy()
+    # ✅ 컬럼 이름을 소문자, 공백 제거
+    df.columns = [c.strip().lower() for c in df.columns]
+    # ✅ term / definition 컬럼 강제 보정
+    if "term" not in df.columns:
+        for alt in ["word", "entry", "expression"]:
+            if alt in df.columns:
+                df.rename(columns={alt: "term"}, inplace=True)
+    if "definition" not in df.columns:
+        for alt in ["description", "meaning", "explanation"]:
+            if alt in df.columns:
+                df.rename(columns={alt: "definition"}, inplace=True)
+    # ✅ 검색 처리
+    df["term"] = df["term"].astype(str).str.strip().str.lower()
+    df["definition"] = df["definition"].astype(str)
+    found = df[df["term"].str.contains(term.lower(), case=False, na=False)]
+    # ✅ 출력
+    if len(found) > 0:
+        for _, row in found.iterrows():
+            st.markdown(f"**{row['term'].capitalize()}** — {row['definition']}")
     else:
-        # 어떤 컬럼이 있는지 확인
-        cols = list(glossary_df.columns)
-        # 용어 비슷한 컬럼 찾기
-        possible_term_cols = [c for c in cols if "term" in c or "entry" in c or "word" in c]
-        # 설명 비슷한 컬럼
-        possible_def_cols = [c for c in cols if "def" in c or "description" in c or "explanation" in c or "meaning" in c]
+        st.info("No glossary match found for this term.")
 
-        df = glossary_df.copy()
-
-        # 일단 전 컬럼 문자열로
-        for c in df.columns:
-            df[c] = df[c].astype(str)
-
-        # 용어 컬럼 있으면 그걸로 필터
-        if possible_term_cols:
-            mask = False
-            for c in possible_term_cols:
-                mask = mask | df[c].str.lower().str.contains(term_low, na=False)
-            hits = df[mask]
-        else:
-            # 용어 컬럼을 못 찾겠으면 모든 컬럼에서 검색
-            mask = False
-            for c in df.columns:
-                mask = mask | df[c].str.lower().str.contains(term_low, na=False)
-            hits = df[mask]
-
-        if hits.empty:
-            st.info("No glossary match found for this term.")
         else:
             for _, row in hits.iterrows():
                 st.markdown("---")
@@ -155,6 +150,7 @@ if term:
     st.write("현재는 OpenAI 호출 부분을 비워두었습니다. 위에서 본문이 1개 이상이라면 여기서 GPT 호출을 붙이면 됩니다.")
 else:
     st.info("먼저 위 입력창에 찾고 싶은 주제나 단어를 넣어 주세요.")
+
 
 
 
