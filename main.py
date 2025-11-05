@@ -1,23 +1,24 @@
 import streamlit as st
-import pandas as pd
 import os
+import openai
+import requests
+import json
 
-# -------------------------------------------------------
+# ------------------------------------------------------------
 # 기본 설정
-# -------------------------------------------------------
+# ------------------------------------------------------------
 st.set_page_config(page_title="Urantia Theme Study", layout="wide")
 st.title("📘 Urantia Theme Study")
-st.caption("Keyword search + Glossary lookup + AI study draft (stable version)")
+st.caption("Keyword-based Urantia Book search, GPT-5 analysis, and Gamma PPT generation")
 
-# -------------------------------------------------------
+# ------------------------------------------------------------
 # 파일 경로
-# -------------------------------------------------------
+# ------------------------------------------------------------
 EN_PATH = os.path.join("data", "urantia_en.txt")
-GLOSS_PATH = os.path.join("data", "English_Master_Glossary.xlsx")
 
-# -------------------------------------------------------
+# ------------------------------------------------------------
 # 영어 본문 로드
-# -------------------------------------------------------
+# ------------------------------------------------------------
 @st.cache_data
 def load_text():
     encodings = ["utf-8", "utf-8-sig", "cp949", "latin-1"]
@@ -29,92 +30,109 @@ def load_text():
             continue
     return []
 
-# -------------------------------------------------------
-# 용어집 로드 (자동 컬럼 정리)
-# -------------------------------------------------------
-@st.cache_data
-def load_glossary():
-    try:
-        df = pd.read_excel(GLOSS_PATH)
-        raw_cols = list(df.columns)
-        # 소문자+공백제거
-        df.columns = [c.strip().lower() for c in df.columns]
-
-        # 컬럼 자동 감지
-        if "term" not in df.columns or "definition" not in df.columns:
-            if len(df.columns) == 2:
-                df.rename(columns={
-                    df.columns[0]: "term",
-                    df.columns[1]: "definition"
-                }, inplace=True)
-            else:
-                for c in df.columns:
-                    if "term" in c: df.rename(columns={c: "term"}, inplace=True)
-                    if "def" in c or "desc" in c: df.rename(columns={c: "definition"}, inplace=True)
-
-        df["term"] = df["term"].astype(str).str.strip().str.lower()
-        df["definition"] = df["definition"].astype(str).str.strip()
-
-        return df, raw_cols
-    except Exception as e:
-        st.error(f"⚠️ Glossary load error: {e}")
-        return None, []
-
-# -------------------------------------------------------
-# 데이터 로드
-# -------------------------------------------------------
 text_lines = load_text()
-glossary, raw_cols = load_glossary()
 
-st.markdown("### 📦 Data Status")
-st.write(f"📁 data/ folder exists: {os.path.exists('data')}")
-st.write(f"📄 urantia_en.txt lines: {len(text_lines)}")
-st.write(f"📄 glossary columns: {raw_cols if raw_cols else '❌ not loaded'}")
+# ------------------------------------------------------------
+# API 키 확인
+# ------------------------------------------------------------
+OPENAI_KEY = os.getenv("OPENAI_API_KEY")
+GAMMA_KEY = os.getenv("GAMMA_API_KEY")  # 🔑 Gamma AI API 키
 
-# -------------------------------------------------------
+if not OPENAI_KEY:
+    st.error("❌ OPENAI_API_KEY 환경변수가 없습니다. Render 환경 변수에 추가하세요.")
+else:
+    openai.api_key = OPENAI_KEY
+
+# ------------------------------------------------------------
 # 검색 입력
-# -------------------------------------------------------
-term = st.text_input("🔍 Enter keyword or theme (e.g., Thought Adjuster, faith, Michael)").strip()
+# ------------------------------------------------------------
+term = st.text_input("🔍 Enter theme keyword (e.g., Thought Adjuster, Eternal Life, Michael)").strip()
 
-# -------------------------------------------------------
+# ------------------------------------------------------------
 # 검색 실행
-# -------------------------------------------------------
+# ------------------------------------------------------------
 if term:
     st.markdown("---")
 
-    # 1️⃣ Glossary Lookup
-    st.subheader("1. Glossary Lookup")
-    if glossary is not None and len(glossary) > 0:
-        found = glossary[glossary["term"].str.contains(term.lower(), case=False, na=False)]
-        if len(found) > 0:
-            for _, row in found.iterrows():
-                st.markdown(f"**{row['term'].capitalize()}** — {row['definition']}")
-        else:
-            st.info("No glossary match found for this term.")
-    else:
-        st.warning("Glossary not loaded or invalid structure.")
-
-    # 2️⃣ Urantia Book Search
-    st.subheader("2. Passages in The Urantia Book")
+    # 1️⃣ Urantia 본문 검색
+    st.subheader("1. Relevant passages from The Urantia Book")
     matches = [line for line in text_lines if term.lower() in line.lower()]
     if matches:
-        for m in matches[:10]:
+        for m in matches[:20]:
             st.markdown(f"🔹 {m}")
     else:
-        st.info("No passages found in urantia_en.txt containing that keyword.")
+        st.warning("No passages found containing that keyword.")
 
-    # 3️⃣ Topic importance
-    st.subheader("3. Topic importance check")
-    if len(matches) < 2 and len(term.split()) < 2:
-        st.info("This topic seems too short or rare for an AI summary.")
-    else:
-        st.success("✅ Enough material for AI-based study expansion later.")
+    # 2️⃣ GPT-5 분석 및 보고서 생성
+    if OPENAI_KEY and matches:
+        st.subheader("2. GPT-5 Thematic Analysis and Summary")
+        with st.spinner("Analyzing theme..."):
+            try:
+                context = "\n".join(matches[:50])
+                prompt = f"""
+You are a theological researcher specializing in The Urantia Book.
+Analyze the following excerpts that mention the keyword '{term}'.
+Write a detailed academic report that includes:
+- Summary of the main ideas
+- Theological and cosmological meaning
+- Connection to human spiritual growth
+- Cross references and moral implications
+Write clearly and elegantly in English.
 
-    # 4️⃣ AI Study (Placeholder)
-    st.subheader("4. AI study material")
-    st.info("AI explanation & PPT builder (GPT + Gamma) will appear here.")
+Text excerpts:
+{context}
+                """
+
+                response = openai.ChatCompletion.create(
+                    model="gpt-4o-mini",
+                    messages=[{"role": "user", "content": prompt}],
+                    temperature=0.7,
+                    max_tokens=1000
+                )
+
+                report = response.choices[0].message.content.strip()
+                st.markdown(report)
+
+                # 3️⃣ Gamma용 자료 생성
+                st.subheader("3. PPT (Gamma) Export Material")
+                st.markdown("The text below will be used to generate a 5-slide presentation in Gamma AI.")
+                st.text_area("AI-generated Report", report, height=300)
+
+                # 4️⃣ Gamma AI PPT 자동 생성
+                if GAMMA_KEY:
+                    st.subheader("4. Generate PPT via Gamma AI")
+                    if st.button("🚀 Create 5-slide presentation in Gamma"):
+                        try:
+                            headers = {
+                                "Authorization": f"Bearer {GAMMA_KEY}",
+                                "Content-Type": "application/json"
+                            }
+                            gamma_prompt = {
+                                "title": f"Urantia Theme Study — {term}",
+                                "content": report,
+                                "slides": 5
+                            }
+                            gamma_url = "https://api.gamma.app/v1/create"  # 실제 API 엔드포인트
+                            r = requests.post(gamma_url, headers=headers, data=json.dumps(gamma_prompt))
+                            if r.status_code == 200:
+                                link = r.json().get("presentation_url", "No link returned")
+                                st.success(f"✅ Gamma PPT created successfully! [Open Presentation]({link})")
+                            else:
+                                st.error(f"⚠️ Gamma API error: {r.status_code} — {r.text}")
+                        except Exception as e:
+                            st.error(f"Gamma API call failed: {e}")
+                else:
+                    st.info("To enable automatic PPT creation, add your `GAMMA_API_KEY` to environment variables.")
+
+            except Exception as e:
+                st.error(f"⚠️ GPT API error: {e}")
+
+    elif not OPENAI_KEY:
+        st.info("Enter your OpenAI API key to enable GPT-5 analysis.")
+
 else:
-    st.info("Please enter a keyword above to begin searching.")
+    st.info("Please enter a keyword above to begin analysis.")
+
 
 
 
