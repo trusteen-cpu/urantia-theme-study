@@ -1,35 +1,43 @@
 import streamlit as st
 import os
 import re
+from html import escape
 
 # -----------------------
 # 기본 설정
 # -----------------------
 st.set_page_config(page_title="Urantia Theme Study", layout="wide")
-st.title("📘 Urantia Theme Study (GPT 5-slide generator)")
-st.caption("Enter a Urantia-related theme/term → see matching passages → let GPT draft a 5-slide study outline.")
+st.title("📘 Urantia Theme Study – AI Theological Report + 5 Slides")
+st.caption("Enter a Urantia-related theme → highlighted passages → AI report + 5-slide outline with notes.")
 
 # -----------------------
-# 데이터 경로
+# 사용자별 API Key 입력
+# -----------------------
+if "user_api_key" not in st.session_state:
+    st.session_state.user_api_key = ""
+
+st.sidebar.subheader("🔑 OpenAI API Key 설정")
+api_input = st.sidebar.text_input("Your OpenAI API Key:", type="password", value=st.session_state.user_api_key)
+if st.sidebar.button("✅ Save Key"):
+    st.session_state.user_api_key = api_input
+    st.sidebar.success("API key saved for this session.")
+api_key = st.session_state.user_api_key or os.getenv("OPENAI_API_KEY", "")
+
+# -----------------------
+# 데이터 로드
 # -----------------------
 DATA_DIR = "data"
 EN_PATH = os.path.join(DATA_DIR, "urantia_en.txt")
 
-# -----------------------
-# 텍스트 안전하게 읽기
-# -----------------------
 def safe_read_text(path: str) -> list[str]:
     encodings = ["utf-8", "utf-8-sig", "cp949", "euc-kr", "latin-1"]
-    last_err = None
     for enc in encodings:
         try:
             with open(path, "r", encoding=enc) as f:
                 return f.readlines()
-        except Exception as e:
-            last_err = e
-    # 최후 수단: 깨진 글자는 � 로라도
-    with open(path, "r", encoding="utf-8", errors="replace") as f:
-        return f.readlines()
+        except:
+            continue
+    return []
 
 @st.cache_data
 def load_urantia_en():
@@ -40,122 +48,120 @@ def load_urantia_en():
 urantia_lines = load_urantia_en()
 
 # -----------------------
-# 본문 검색 함수
+# 검색 + 하이라이트 기능
 # -----------------------
-def search_passages(keyword: str, lines: list[str], limit: int = 80):
-    """키워드가 들어 있는 줄을 위에서부터 찾아서 반환"""
+def highlight_term(text: str, term: str) -> str:
+    """검색된 용어를 형광색으로 강조"""
+    if not term:
+        return escape(text)
+    pattern = re.compile(re.escape(term), re.IGNORECASE)
+    highlighted = pattern.sub(lambda m: f"<mark style='background-color:#fffd75'>{escape(m.group(0))}</mark>", text)
+    return highlighted
+
+def search_passages(keyword: str, lines: list[str], limit: int = 200):
     if not keyword:
         return []
-    keyword_lc = keyword.lower()
-    results = []
-    for line in lines:
-        if keyword_lc in line.lower():
-            results.append(line.strip())
-            if len(results) >= limit:
-                break
-    return results
+    key = keyword.lower()
+    results = [l.strip() for l in lines if key in l.lower()]
+    return results[:limit]
 
 # -----------------------
-# GPT 슬라이드 생성 함수
+# GPT 보고서 + 슬라이드
 # -----------------------
-def generate_slides_from_passages(term: str, passages: list[str]):
-    """
-    passages를 기반으로 5장짜리 슬라이드 + 발표 스크립트 생성
-    OpenAI 최신 파이썬 SDK (from openai import OpenAI) 방식 사용
-    """
-    api_key = os.getenv("OPENAI_API_KEY", "")
+def generate_gpt_report_and_slides(term: str, passages: list[str]):
     if not api_key:
-        return "**OPENAI_API_KEY가 설정되어 있지 않습니다. Render 환경 변수에 넣어주세요.**"
+        return "**⚠️ API Key가 설정되어 있지 않습니다. 왼쪽에서 입력해주세요.**"
 
-    # 최신 SDK 방식
     try:
         from openai import OpenAI
         client = OpenAI(api_key=api_key)
     except Exception as e:
-        return f"OpenAI 라이브러리를 불러오는 데 실패했습니다: {e}"
+        return f"⚠️ OpenAI 라이브러리 로드 오류: {e}"
 
-    # passages를 하나의 큰 블록으로
-    source_block = "\n".join(passages) if passages else "No source passages found in the Urantia Book."
+    joined_passages = "\n".join(passages) or "No passages found."
 
     prompt = f"""
-You are helping to create a study presentation about a theme in The Urantia Book.
+You are a theological researcher of *The Urantia Book*.
 
 Theme: "{term}"
 
-Below are source passages from the Urantia Book that mention or relate to this term:
+Below are Urantia Book passages that mention or relate to this theme.
 
---- SOURCE PASSAGES START ---
-{source_block}
---- SOURCE PASSAGES END ---
+---
 
-Please do the following:
+## Part 1. Theological Report
+Write an academic-style synthesis (500–800 words) explaining:
+- The Urantia meaning and origin of this theme  
+- Theological and cosmological significance  
+- Its role in relation to the Father, the Supreme, and Adjusters  
+- Philosophical implications for mortal ascension  
+- Lessons for human faith and experience
 
-1. Read the passages and infer the Urantia-Book-specific meaning of this theme.
-2. Produce **exactly 5 slides**.
-3. Each slide must have:
-   - Title
-   - 3-5 bullet points (concise, but Urantia-ish in tone)
-   - A short speaker notes section (2-4 sentences) explaining how to present this slide.
-4. If the passages are few or incomplete, still infer the likely Urantia perspective and make the outline helpful for teaching.
-5. Output in clean markdown with clear slide separation.
+---
 
-FORMAT STRICTLY LIKE THIS:
+## Part 2. 5-Slide Outline with Speaker Notes
+Create **exactly 5 slides**.
+
+Each slide should include:
+- Title  
+- 3–5 concise bullet points  
+- `Speaker Notes:` (200–500 characters) — a short oral commentary
+
+Format strictly as markdown:
 
 # Slide 1: <title>
 - point
 - point
-Speaker notes: ...
+Speaker Notes: ...
 
 # Slide 2: ...
 ...
 
-Do not add extra commentary before or after.
+---
+
+### Source Passages:
+{joined_passages}
 """
 
     try:
-        # 모델은 사용 중인 계정에서 되는 걸로 바꾸세요
-        # 온전히 지원되는 모델은 temperature 미지정이 안전
         resp = client.chat.completions.create(
             model="gpt-4o-mini",
             messages=[
-                {"role": "system", "content": "You are an expert Urantia Book study assistant."},
+                {"role": "system", "content": "You are a Urantia scholar skilled in theological interpretation and teaching."},
                 {"role": "user", "content": prompt}
             ]
         )
-        content = resp.choices[0].message.content
-        return content
+        return resp.choices[0].message.content
     except Exception as e:
-        return f"⚠️ GPT 생성 중 오류가 발생했습니다:\n{e}"
+        return f"⚠️ GPT 오류 발생: {e}"
 
 # -----------------------
 # UI
 # -----------------------
-st.subheader("1. Enter a theme / keyword")
-term = st.text_input("예: Thought Adjuster, Supreme Being, Michael of Nebadon, faith, survival, morontia", "")
+st.subheader("1️⃣ Enter a Urantia theme or concept")
+term = st.text_input("예: Supreme Being, Thought Adjuster, Michael of Nebadon, Faith, Survival, Morontia", "")
 
-passages = []
-if term:
-    passages = search_passages(term, urantia_lines, limit=120)
+passages = search_passages(term, urantia_lines) if term else []
 
-st.subheader("2. Matching passages in The Urantia Book")
+st.subheader("2️⃣ Related Passages in The Urantia Book")
 if not urantia_lines:
-    st.error("data/urantia_en.txt 파일을 찾지 못했습니다. GitHub 저장소의 data 폴더에 이 파일을 올려주세요.")
+    st.error("📂 data/urantia_en.txt 파일이 없습니다. data 폴더에 추가하세요.")
 elif term and passages:
-    for i, p in enumerate(passages, start=1):
-        st.markdown(f"**{i}.** {p}")
-elif term and not passages:
-    st.info("본문에서 이 단어를 찾지 못했습니다. 철자나 다른 표현을 시도해 보세요.")
+    for i, line in enumerate(passages, 1):
+        st.markdown(f"<b>{i}.</b> {highlight_term(line, term)}", unsafe_allow_html=True)
+elif term:
+    st.info("No passages found. Try another related term.")
 
-st.subheader("3. Generate 5-slide study outline (GPT)")
-st.caption("위에서 표시된 본문을 근거로 5장짜리 슬라이드 구조와 발표 스크립트를 만들어 줍니다.")
+st.subheader("3️⃣ Generate Theological Report + 5 Slides")
+st.caption("AI will analyze the passages and create both a report and a slide outline with notes.")
 
-if st.button("✨ Generate 5-slide outline"):
-    with st.spinner("GPT가 슬라이드 구조를 만드는 중입니다..."):
-        slides_md = generate_slides_from_passages(term, passages)
-    st.markdown("### 📑 Generated Slides (markdown)")
-    st.markdown(slides_md)
+if st.button("✨ Generate AI Report & Slides"):
+    with st.spinner("AI is writing a theological synthesis and slides..."):
+        result = generate_gpt_report_and_slides(term, passages)
+    st.markdown(result)
 else:
-    st.info("위의 버튼을 누르면 GPT가 자동으로 5장짜리 발표안을 만들어 줍니다.")
+    st.info("주제 입력 후 버튼을 눌러 보고서 + 슬라이드를 생성하세요.")
+
 
 
 
