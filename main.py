@@ -1,156 +1,162 @@
 import streamlit as st
 import os
-import requests
-import json
-from openai import OpenAI
+import re
 
-# ------------------------------------------------------------
+# -----------------------
 # 기본 설정
-# ------------------------------------------------------------
+# -----------------------
 st.set_page_config(page_title="Urantia Theme Study", layout="wide")
-st.title("📘 Urantia Theme Study")
-st.caption("Comprehensive keyword-based Urantia Book search + GPT-5 analysis + Gamma PPT generation")
+st.title("📘 Urantia Theme Study (GPT 5-slide generator)")
+st.caption("Enter a Urantia-related theme/term → see matching passages → let GPT draft a 5-slide study outline.")
 
-# ------------------------------------------------------------
-# 파일 경로
-# ------------------------------------------------------------
-EN_PATH = os.path.join("data", "urantia_en.txt")
+# -----------------------
+# 데이터 경로
+# -----------------------
+DATA_DIR = "data"
+EN_PATH = os.path.join(DATA_DIR, "urantia_en.txt")
 
-# ------------------------------------------------------------
-# 본문 로드
-# ------------------------------------------------------------
-@st.cache_data
-def load_text():
-    encodings = ["utf-8", "utf-8-sig", "cp949", "latin-1"]
+# -----------------------
+# 텍스트 안전하게 읽기
+# -----------------------
+def safe_read_text(path: str) -> list[str]:
+    encodings = ["utf-8", "utf-8-sig", "cp949", "euc-kr", "latin-1"]
+    last_err = None
     for enc in encodings:
         try:
-            with open(EN_PATH, "r", encoding=enc) as f:
-                return [line.strip() for line in f if line.strip()]
-        except Exception:
-            continue
-    return []
+            with open(path, "r", encoding=enc) as f:
+                return f.readlines()
+        except Exception as e:
+            last_err = e
+    # 최후 수단: 깨진 글자는 � 로라도
+    with open(path, "r", encoding="utf-8", errors="replace") as f:
+        return f.readlines()
 
-text_lines = load_text()
+@st.cache_data
+def load_urantia_en():
+    if not os.path.exists(EN_PATH):
+        return []
+    return safe_read_text(EN_PATH)
 
-# ------------------------------------------------------------
-# API 키 확인
-# ------------------------------------------------------------
-OPENAI_KEY = os.getenv("OPENAI_API_KEY")
-GAMMA_KEY = os.getenv("GAMMA_API_KEY")
+urantia_lines = load_urantia_en()
 
-if not OPENAI_KEY:
-    st.error("❌ OPENAI_API_KEY is missing. Please add it in Render → Environment Variables.")
-    st.stop()
+# -----------------------
+# 본문 검색 함수
+# -----------------------
+def search_passages(keyword: str, lines: list[str], limit: int = 80):
+    """키워드가 들어 있는 줄을 위에서부터 찾아서 반환"""
+    if not keyword:
+        return []
+    keyword_lc = keyword.lower()
+    results = []
+    for line in lines:
+        if keyword_lc in line.lower():
+            results.append(line.strip())
+            if len(results) >= limit:
+                break
+    return results
 
-client = OpenAI(api_key=OPENAI_KEY)
+# -----------------------
+# GPT 슬라이드 생성 함수
+# -----------------------
+def generate_slides_from_passages(term: str, passages: list[str]):
+    """
+    passages를 기반으로 5장짜리 슬라이드 + 발표 스크립트 생성
+    OpenAI 최신 파이썬 SDK (from openai import OpenAI) 방식 사용
+    """
+    api_key = os.getenv("OPENAI_API_KEY", "")
+    if not api_key:
+        return "**OPENAI_API_KEY가 설정되어 있지 않습니다. Render 환경 변수에 넣어주세요.**"
 
-# ------------------------------------------------------------
-# 사용자 입력
-# ------------------------------------------------------------
-term = st.text_input("🔍 Enter a theme keyword (e.g., Thought Adjuster, Eternal Life, Michael)").strip()
+    # 최신 SDK 방식
+    try:
+        from openai import OpenAI
+        client = OpenAI(api_key=api_key)
+    except Exception as e:
+        return f"OpenAI 라이브러리를 불러오는 데 실패했습니다: {e}"
 
-# ------------------------------------------------------------
-# 검색 및 분석
-# ------------------------------------------------------------
+    # passages를 하나의 큰 블록으로
+    source_block = "\n".join(passages) if passages else "No source passages found in the Urantia Book."
+
+    prompt = f"""
+You are helping to create a study presentation about a theme in The Urantia Book.
+
+Theme: "{term}"
+
+Below are source passages from the Urantia Book that mention or relate to this term:
+
+--- SOURCE PASSAGES START ---
+{source_block}
+--- SOURCE PASSAGES END ---
+
+Please do the following:
+
+1. Read the passages and infer the Urantia-Book-specific meaning of this theme.
+2. Produce **exactly 5 slides**.
+3. Each slide must have:
+   - Title
+   - 3-5 bullet points (concise, but Urantia-ish in tone)
+   - A short speaker notes section (2-4 sentences) explaining how to present this slide.
+4. If the passages are few or incomplete, still infer the likely Urantia perspective and make the outline helpful for teaching.
+5. Output in clean markdown with clear slide separation.
+
+FORMAT STRICTLY LIKE THIS:
+
+# Slide 1: <title>
+- point
+- point
+Speaker notes: ...
+
+# Slide 2: ...
+...
+
+Do not add extra commentary before or after.
+"""
+
+    try:
+        # 모델은 사용 중인 계정에서 되는 걸로 바꾸세요
+        # 온전히 지원되는 모델은 temperature 미지정이 안전
+        resp = client.chat.completions.create(
+            model="gpt-4o-mini",
+            messages=[
+                {"role": "system", "content": "You are an expert Urantia Book study assistant."},
+                {"role": "user", "content": prompt}
+            ]
+        )
+        content = resp.choices[0].message.content
+        return content
+    except Exception as e:
+        return f"⚠️ GPT 생성 중 오류가 발생했습니다:\n{e}"
+
+# -----------------------
+# UI
+# -----------------------
+st.subheader("1. Enter a theme / keyword")
+term = st.text_input("예: Thought Adjuster, Supreme Being, Michael of Nebadon, faith, survival, morontia", "")
+
+passages = []
 if term:
-    st.markdown("---")
-    st.subheader("1️⃣ Relevant passages from The Urantia Book")
+    passages = search_passages(term, urantia_lines, limit=120)
 
-    matches = [line for line in text_lines if term.lower() in line.lower()]
+st.subheader("2. Matching passages in The Urantia Book")
+if not urantia_lines:
+    st.error("data/urantia_en.txt 파일을 찾지 못했습니다. GitHub 저장소의 data 폴더에 이 파일을 올려주세요.")
+elif term and passages:
+    for i, p in enumerate(passages, start=1):
+        st.markdown(f"**{i}.** {p}")
+elif term and not passages:
+    st.info("본문에서 이 단어를 찾지 못했습니다. 철자나 다른 표현을 시도해 보세요.")
 
-    if matches:
-        st.write(f"📖 Found {len(matches)} passages containing '{term}'.")
-        for m in matches:
-            st.markdown(f"🔹 {m}")
-    else:
-        st.warning("No passages found containing that keyword.")
+st.subheader("3. Generate 5-slide study outline (GPT)")
+st.caption("위에서 표시된 본문을 근거로 5장짜리 슬라이드 구조와 발표 스크립트를 만들어 줍니다.")
 
-    # --------------------------------------------------------
-    # GPT 분석 보고서 생성
-    # --------------------------------------------------------
-    if matches:
-        st.markdown("---")
-        st.subheader("2️⃣ GPT-5 Thematic Analysis")
-
-        # 긴 본문일 경우 일부만 요약에 사용
-        full_context = "\n".join(matches)
-        short_context = "\n".join(matches[:200])
-
-        context_used = short_context if len(full_context) > 50000 else full_context
-
-        with st.spinner("🧠 Analyzing with GPT-5... please wait"):
-            try:
-                prompt = f"""
-You are an advanced Urantia Book scholar.
-Analyze the following full set of passages that contain the term "{term}".
-
-Your task:
-1. Summarize all relevant teachings related to this keyword.
-2. Explain its theological and cosmic meaning.
-3. Show spiritual implications for human life.
-4. Include relevant cross-references (if possible).
-5. End with a reflective conclusion in the tone of Urantia scholarship.
-
-Make sure your answer is faithful to the Urantia text and not distorted.
-
-Text passages:
-{context_used}
-                """
-
-                response = client.chat.completions.create(
-                    model="gpt-4o-mini",
-                    messages=[
-                        {"role": "system", "content": "You are a Urantia scholar and researcher."},
-                        {"role": "user", "content": prompt}
-                    ],
-                    temperature=0.7,
-                    max_tokens=1800,
-                )
-
-                report = response.choices[0].message.content.strip()
-                st.markdown(report)
-
-                # --------------------------------------------------------
-                # PPT 내보내기
-                # --------------------------------------------------------
-                st.markdown("---")
-                st.subheader("3️⃣ PPT Export Material")
-                st.text_area("AI Study Report (for Gamma PPT generation)", report, height=300)
-
-                # --------------------------------------------------------
-                # Gamma PPT 자동 생성
-                # --------------------------------------------------------
-                if GAMMA_KEY:
-                    st.subheader("4️⃣ Generate PPT in Gamma AI")
-                    if st.button("🚀 Create 5-slide presentation in Gamma"):
-                        try:
-                            headers = {
-                                "Authorization": f"Bearer {GAMMA_KEY}",
-                                "Content-Type": "application/json"
-                            }
-                            payload = {
-                                "title": f"Urantia Theme Study — {term}",
-                                "content": report,
-                                "slides": 5
-                            }
-                            url = "https://api.gamma.app/v1/create"
-                            r = requests.post(url, headers=headers, data=json.dumps(payload))
-                            if r.status_code == 200:
-                                data = r.json()
-                                link = data.get("presentation_url", "No link returned")
-                                st.success(f"✅ PPT created successfully! [Open in Gamma]({link})")
-                            else:
-                                st.error(f"⚠️ Gamma API Error: {r.status_code} — {r.text}")
-                        except Exception as e:
-                            st.error(f"Gamma API failed: {e}")
-                else:
-                    st.info("To enable Gamma PPT creation, add `GAMMA_API_KEY` in your environment variables.")
-
-            except Exception as e:
-                st.error(f"⚠️ GPT-5 API Error: {e}")
-
+if st.button("✨ Generate 5-slide outline"):
+    with st.spinner("GPT가 슬라이드 구조를 만드는 중입니다..."):
+        slides_md = generate_slides_from_passages(term, passages)
+    st.markdown("### 📑 Generated Slides (markdown)")
+    st.markdown(slides_md)
 else:
-    st.info("Enter a keyword (e.g. 'Thought Adjuster', 'Supreme Being', 'Faith') to begin your study.")
+    st.info("위의 버튼을 누르면 GPT가 자동으로 5장짜리 발표안을 만들어 줍니다.")
+
 
 
 
