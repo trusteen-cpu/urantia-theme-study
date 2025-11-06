@@ -130,7 +130,12 @@ Speaker Notes: ...
 # UI
 # -----------------------
 st.subheader("1️⃣ Enter a Urantia theme or concept")
-term = st.text_input("예: Supreme Being, Thought Adjuster, Michael of Nebadon, Faith, Survival, Morontia", "")
+term = st.text_input(
+    "예: Supreme Being, Thought Adjuster, Michael of Nebadon, Faith, Survival, Morontia",
+    "",
+    key="urantia_theme_input"
+)
+
 
 passages = search_passages(term, urantia_lines) if term else []
 
@@ -306,6 +311,7 @@ if st.button("✨ Generate AI Report & Slides"):
     st.markdown(result)
 else:
     st.info("주제 입력 후 버튼을 눌러 보고서 + 슬라이드를 생성하세요.")
+
 
 
 
