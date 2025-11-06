@@ -11,17 +11,13 @@ st.title("📘 Urantia Theme Study – AI Theological Report + 5 Slides")
 st.caption("Enter a Urantia-related theme → highlighted passages → AI report + 5-slide outline with notes.")
 
 # -----------------------
-# 사용자별 API Key 입력
+# 🔑 GitHub Secrets (환경 변수)에서 API Key 자동 불러오기
 # -----------------------
-if "user_api_key" not in st.session_state:
-    st.session_state.user_api_key = ""
+api_key = os.getenv("OPENAI_API_KEY")
 
-st.sidebar.subheader("🔑 OpenAI API Key 설정")
-api_input = st.sidebar.text_input("Your OpenAI API Key:", type="password", value=st.session_state.user_api_key)
-if st.sidebar.button("✅ Save Key"):
-    st.session_state.user_api_key = api_input
-    st.sidebar.success("API key saved for this session.")
-api_key = st.session_state.user_api_key or os.getenv("OPENAI_API_KEY", "")
+if not api_key:
+    st.error("⚠️ OpenAI API 키를 찾을 수 없습니다. Render 또는 GitHub Secrets에 등록하세요.")
+    st.stop()
 
 # -----------------------
 # 데이터 로드
@@ -51,12 +47,10 @@ urantia_lines = load_urantia_en()
 # 검색 + 하이라이트 기능
 # -----------------------
 def highlight_term(text: str, term: str) -> str:
-    """검색된 용어를 형광색으로 강조"""
     if not term:
         return escape(text)
     pattern = re.compile(re.escape(term), re.IGNORECASE)
-    highlighted = pattern.sub(lambda m: f"<mark style='background-color:#fffd75'>{escape(m.group(0))}</mark>", text)
-    return highlighted
+    return pattern.sub(lambda m: f"<mark style='background-color:#fffd75'>{escape(m.group(0))}</mark>", text)
 
 def search_passages(keyword: str, lines: list[str], limit: int = 200):
     if not keyword:
@@ -66,12 +60,9 @@ def search_passages(keyword: str, lines: list[str], limit: int = 200):
     return results[:limit]
 
 # -----------------------
-# GPT 보고서 + 슬라이드
+# GPT 보고서 + 슬라이드 생성
 # -----------------------
 def generate_gpt_report_and_slides(term: str, passages: list[str]):
-    if not api_key:
-        return "**⚠️ API Key가 설정되어 있지 않습니다. 왼쪽에서 입력해주세요.**"
-
     try:
         from openai import OpenAI
         client = OpenAI(api_key=api_key)
@@ -107,7 +98,7 @@ Each slide should include:
 - 3–5 concise bullet points  
 - `Speaker Notes:` (200–500 characters) — a short oral commentary
 
-Format strictly as markdown:
+Format strictly as markdown.
 
 # Slide 1: <title>
 - point
@@ -161,6 +152,162 @@ if st.button("✨ Generate AI Report & Slides"):
     st.markdown(result)
 else:
     st.info("주제 입력 후 버튼을 눌러 보고서 + 슬라이드를 생성하세요.")
+import streamlit as st
+import os
+import re
+from html import escape
+
+# -----------------------
+# 기본 설정
+# -----------------------
+st.set_page_config(page_title="Urantia Theme Study", layout="wide")
+st.title("📘 Urantia Theme Study – AI Theological Report + 5 Slides")
+st.caption("Enter a Urantia-related theme → highlighted passages → AI report + 5-slide outline with notes.")
+
+# -----------------------
+# 🔑 GitHub Secrets (환경 변수)에서 API Key 자동 불러오기
+# -----------------------
+api_key = os.getenv("OPENAI_API_KEY")
+
+if not api_key:
+    st.error("⚠️ OpenAI API 키를 찾을 수 없습니다. Render 또는 GitHub Secrets에 등록하세요.")
+    st.stop()
+
+# -----------------------
+# 데이터 로드
+# -----------------------
+DATA_DIR = "data"
+EN_PATH = os.path.join(DATA_DIR, "urantia_en.txt")
+
+def safe_read_text(path: str) -> list[str]:
+    encodings = ["utf-8", "utf-8-sig", "cp949", "euc-kr", "latin-1"]
+    for enc in encodings:
+        try:
+            with open(path, "r", encoding=enc) as f:
+                return f.readlines()
+        except:
+            continue
+    return []
+
+@st.cache_data
+def load_urantia_en():
+    if not os.path.exists(EN_PATH):
+        return []
+    return safe_read_text(EN_PATH)
+
+urantia_lines = load_urantia_en()
+
+# -----------------------
+# 검색 + 하이라이트 기능
+# -----------------------
+def highlight_term(text: str, term: str) -> str:
+    if not term:
+        return escape(text)
+    pattern = re.compile(re.escape(term), re.IGNORECASE)
+    return pattern.sub(lambda m: f"<mark style='background-color:#fffd75'>{escape(m.group(0))}</mark>", text)
+
+def search_passages(keyword: str, lines: list[str], limit: int = 200):
+    if not keyword:
+        return []
+    key = keyword.lower()
+    results = [l.strip() for l in lines if key in l.lower()]
+    return results[:limit]
+
+# -----------------------
+# GPT 보고서 + 슬라이드 생성
+# -----------------------
+def generate_gpt_report_and_slides(term: str, passages: list[str]):
+    try:
+        from openai import OpenAI
+        client = OpenAI(api_key=api_key)
+    except Exception as e:
+        return f"⚠️ OpenAI 라이브러리 로드 오류: {e}"
+
+    joined_passages = "\n".join(passages) or "No passages found."
+
+    prompt = f"""
+You are a theological researcher of *The Urantia Book*.
+
+Theme: "{term}"
+
+Below are Urantia Book passages that mention or relate to this theme.
+
+---
+
+## Part 1. Theological Report
+Write an academic-style synthesis (500–800 words) explaining:
+- The Urantia meaning and origin of this theme  
+- Theological and cosmological significance  
+- Its role in relation to the Father, the Supreme, and Adjusters  
+- Philosophical implications for mortal ascension  
+- Lessons for human faith and experience
+
+---
+
+## Part 2. 5-Slide Outline with Speaker Notes
+Create **exactly 5 slides**.
+
+Each slide should include:
+- Title  
+- 3–5 concise bullet points  
+- `Speaker Notes:` (200–500 characters) — a short oral commentary
+
+Format strictly as markdown.
+
+# Slide 1: <title>
+- point
+- point
+Speaker Notes: ...
+
+# Slide 2: ...
+...
+
+---
+
+### Source Passages:
+{joined_passages}
+"""
+
+    try:
+        resp = client.chat.completions.create(
+            model="gpt-4o-mini",
+            messages=[
+                {"role": "system", "content": "You are a Urantia scholar skilled in theological interpretation and teaching."},
+                {"role": "user", "content": prompt}
+            ]
+        )
+        return resp.choices[0].message.content
+    except Exception as e:
+        return f"⚠️ GPT 오류 발생: {e}"
+
+# -----------------------
+# UI
+# -----------------------
+st.subheader("1️⃣ Enter a Urantia theme or concept")
+term = st.text_input("예: Supreme Being, Thought Adjuster, Michael of Nebadon, Faith, Survival, Morontia", "")
+
+passages = search_passages(term, urantia_lines) if term else []
+
+st.subheader("2️⃣ Related Passages in The Urantia Book")
+if not urantia_lines:
+    st.error("📂 data/urantia_en.txt 파일이 없습니다. data 폴더에 추가하세요.")
+elif term and passages:
+    for i, line in enumerate(passages, 1):
+        st.markdown(f"<b>{i}.</b> {highlight_term(line, term)}", unsafe_allow_html=True)
+elif term:
+    st.info("No passages found. Try another related term.")
+
+st.subheader("3️⃣ Generate Theological Report + 5 Slides")
+st.caption("AI will analyze the passages and create both a report and a slide outline with notes.")
+
+if st.button("✨ Generate AI Report & Slides"):
+    with st.spinner("AI is writing a theological synthesis and slides..."):
+        result = generate_gpt_report_and_slides(term, passages)
+    st.markdown(result)
+else:
+    st.info("주제 입력 후 버튼을 눌러 보고서 + 슬라이드를 생성하세요.")
+
+
 
 
 
