@@ -60,12 +60,13 @@ def highlight_term(text: str, term: str) -> str:
     highlighted = pattern.sub(lambda m: f"<mark style='background-color:#fffd75'>{escape(m.group(0))}</mark>", text)
     return highlighted
 
-def search_passages(keyword: str, lines: list[str], limit: int = 200):
+def search_passages(keyword: str, lines: list[str]):
+    """검색 결과 제한 없이 전체 반환"""
     if not keyword:
         return []
     key = keyword.lower()
     results = [l.strip() for l in lines if key in l.lower()]
-    return results[:limit]
+    return results  # 🔥 제한 해제
 
 # -----------------------
 # GPT 보고서 + 슬라이드 생성
@@ -139,7 +140,6 @@ Speaker Notes: ...
 # -----------------------
 st.header("1️⃣ Enter a Urantia theme or concept")
 
-# 👇 여기에 key 추가 (중복 방지용)
 term = st.text_input(
     "예: Supreme Being, Thought Adjuster, Michael of Nebadon, Faith, Survival, Morontia",
     "",
@@ -166,6 +166,8 @@ if st.button("✨ Generate AI Report & Slides", key="generate_btn"):
     st.markdown(result)
 else:
     st.info("주제 입력 후 버튼을 눌러 보고서 + 슬라이드를 생성하세요.")
+
+
 
 
 
